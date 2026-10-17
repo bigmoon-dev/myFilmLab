@@ -45,7 +45,7 @@ RAM-only（拔电池=完全原厂），照片+EXIF 同步。
 ### 1. 地面真值（Ground Truth）
 
 30 个 [GlassMeter](https://glass.works) 胶片模拟 LUT（CC BY 4.0）——
-社区用**真实胶片扫描**标定的 3D 色彩查找表，覆盖 Kodak Portra/Ektar/Gold、
+社区用**真实胶片扫描**标定的 3D LUT，覆盖 Kodak Portra/Ektar/Gold、
 CineStill、Fuji 400H/Velvia、Ilford、Kodak B&W 等。
 
 ### 2. 相机响应矩阵（Part B，33 张）
