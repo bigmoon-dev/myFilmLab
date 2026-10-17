@@ -1,0 +1,75 @@
+================================================================================
+任务简报：K3 探针——menu 层 SetColorMode 路线验证（路线 B' 定案实验）
+日期：2026-10-16  交接：Design Agent  执行：相机侧（人 / shell agent）
+================================================================================
+
+■ 背景（为什么有 K3）
+K1 已证 menu 层 setter 直达捕获（Saturation=4 进了照片）；
+K2 已证捕获链不读任何已测 RAM 变量/设置层。
+离线逆向把 menu 命令的子命令表挖出来了（dump M_1，全部实证）：
+  menu SetColorMode        ← 存在！handler 0xC03FE100
+  menu SetColorModeEffect/Contrast/Sharpness/Saturation/Toning（五轴全家）
+      handlers 0xC03FE170/1F0/270/2F0/370
+  处理器签名 (ctx, argc, argv)，argc==1 为 setter（strtol 解析，成功回 "OK"），
+  无参为 getter（回 "%d" 十进制当前值）。
+假设：物理 Color 键与快门重推共享同一个"当前模式"管理器状态；
+menu SetColorMode 是写入该状态的官方通路 → 走它，快门重推就会推我们的值。
+
+■ 前置
+1. 卡上 \fpSup.BIN 保持 **原版 USB shell 版**（不是 v7；监视任务会污染观测）
+2. fpsh 连通；电池充足；命令纪律照旧（单发 / 0x 前缀 / 超时 10-15s /
+   禁 prom/adj/fwup / 禁读 0x2E030000+ / 卡死拔电池）
+3. 每张记录 SDIM 号；先拍 STD、DUO.R1 基线各 1 张
+
+■ K3-0 getter 摸底（两分钟）
+  ./host/fpsh menu SetColorMode        # STD 态读一次（记录返回值）
+  Color 键切到 DUO.R1
+  ./host/fpsh menu SetColorMode        # DUO 态读一次（记录；学索引域）
+
+■ K3-1 决定性实验（DUO.R1 态）
+  ./host/fpsh menu SetColorMode 5      # 预期应答 OK
+  观察三件事并记录：
+    ① 取景画面：变成 Neutral 风味了吗？
+    ② 按 Color 打开选择器：高亮/当前指示在 Neutral 还是仍 DUO.R1？
+       （关选择器回原界面再继续）
+  ./host/fpsh menu SetColorMode        # getter 回读（=5?）
+  拍照 1 张（记 SDIM 号）
+  ./host/fpsh mem get 0xC31F8914,0xC31F8914,    # 主拷贝现在=5?
+  判读：照片呈 NTR 风味 ⇒ **路线 B' 成立**（快门同步链自此推我们的值）；
+        照片仍原厂 R1 ⇒ menu 层与捕获也不同步，回传，路线重评。
+
+■ K3-2 隐藏模式可达性（SEPIA/SEPIA2 底座存亡）
+  ./host/fpsh menu SetColorMode 2      # HID02
+  观察：应答 OK？取景渲染正常？（异常就下一步还原）
+  ./host/fpsh menu SetColorMode 16     # HID10
+  观察同上。
+  （任一异常：Color 键物理重选 STD 即还原）
+
+■ K3-3 合成验证（若 K3-1 成立）
+  ./host/fpsh menu SetColorMode 5
+  ./host/fpsh menu SetColorModeSaturation 4
+  拍照 1 张 → 应为 NTR+加艳（完整配方经官方链进捕获的实证）
+  ./host/fpsh menu SetColorModeSaturation 0
+
+■ K3-4 DUO 归位路径
+  试：./host/fpsh menu SetColorMode 24    # 能直接选回 DUO 吗？
+  不行就 Color 键物理重选 DUO.R1。记录哪种有效（v8 退出路径要用）。
+
+■ K3-5 快门后状态侦察（K3-1 成立后顺手做）
+  SetColorMode 5 生效后拍一张，然后立即：
+  ./host/fpsh mem get 0xC31F8914,0xC31F8914,
+  → 主拷贝仍是 5（不再被重推回 0x18）= 同步链被合法接管的最终确认
+
+■ 收尾核验（全部归位）
+  menu SetColorMode → 回 DUO.R1（或物理重选）；Saturation=0；
+  setting get pic_color_mode 0 = 0；无其他改动；拷回照片到
+  D:\work\fp\dump\probe_K3\
+
+■ 回传格式
+  每条命令的应答原文 / SDIM↔步骤对照+一句话判读 / 选择器高亮观察 /
+  K3-1 结论（成立与否）/ K3-2 两隐藏模式结果 / K3-5 主拷贝读数
+
+■ 通过后我这边直接产出 v8：
+  apply_look 改为直调 menu setter（地址已全部测绘在案），
+  监视循环/名槽/自愈逻辑不变；模拟门增补 setter 调用断言。
+================================================================================

@@ -1,0 +1,103 @@
+# looks.cfg — FILMLAB 首批配方（DUO 借壳架构）
+# host = DUO 变体枚举（用户入口）；mode = 底色模式；五轴微调
+# 配方初值来自 calibrate.py demo（photo19 部分词典），P3 全矩阵后精修
+
+[Portra400]
+host   = DUO_R1
+mode   = NTR
+sat    = 0
+con    = -1
+ton    = 4
+shp    = 0
+eff    = 2
+name   = PRT400
+
+[Portra160]
+host   = DUO_OR1
+mode   = NTR
+sat    = 0
+con    = -1
+ton    = 4
+shp    = 1
+eff    = 2
+name   = PRT160
+
+[CineStill400D]
+host   = DUO_YE1
+mode   = STD
+sat    = 3
+con    = -1
+ton    = -1
+shp    = 1
+eff    = 4
+name   = CS400D
+
+[Ektar100]
+host   = DUO_YG1
+mode   = VIV
+sat    = 3
+con    = 0
+ton    = -1
+shp    = 0
+eff    = 2
+name   = EKTAR
+
+[Gold200]
+host   = DUO_G1
+mode   = STD
+sat    = 3
+con    = -1
+ton    = -1
+shp    = 1
+eff    = 4
+name   = GLD200
+
+[Pro400H]
+host   = DUO_G2
+mode   = NTR
+sat    = -1
+con    = -1
+ton    = 4
+shp    = 0
+eff    = 1
+name   = FUJI4H
+
+[CineStill800T]
+host   = DUO_B1
+mode   = STD
+sat    = 2
+con    = -1
+ton    = -1
+shp    = 0
+eff    = 3
+name   = CS800T
+
+[SepiaVintage]
+host   = DUO_B2
+mode   = MONO
+sat    = 0
+con    = -1
+ton    = 2
+shp    = 0
+eff    = 0
+name   = SEPIA
+
+[SepiaDeep]
+host   = DUO_P1
+mode   = MONO
+sat    = 0
+con    = 0
+ton    = 3
+shp    = 0
+eff    = 0
+name   = SEPIA2
+
+[MonoClassic]
+host   = DUO_M1
+mode   = MONO
+sat    = 0
+con    = 1
+ton    = 0
+shp    = 2
+eff    = 0
+name   = MONO+

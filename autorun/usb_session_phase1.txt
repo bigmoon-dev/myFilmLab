@@ -1,0 +1,17 @@
+# Phase-1 USB shell session commands (paste after fpSup Shell connects)
+# fw 5.02 only. All read-only. Size args are DECIMAL.
+
+version
+# 1. verify main image is readable now (post-boot)
+mem get C0000000,C0000040,
+
+# 2. locator dumps (same windows as before)
+mem save \LOC_1.bin C0500000,,5000000
+mem save \LOC_2.bin C0200000,,3000000
+mem save \LOC_3.bin C0900000,,4000000
+
+# 3. bonus: shell command table (true copy, for the record)
+mem save \CMDS.bin C0BAC14C,,2000
+
+dir
+# then: safely eject USB, pull the SD card, copy LOC_*.bin back to PC

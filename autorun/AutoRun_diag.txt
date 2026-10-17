@@ -1,0 +1,24 @@
+# Diagnostic: why did 0xC0xxxxxx dumps fail while 0x2E00xxxx worked?
+# Probes address ranges AND sizes separately. fw 5.02 only. All SAFE (read-only).
+
+version
+
+# --- probe 1: can we READ the image start at all? (mem get prints to console) ---
+mem get C0000000,C0000040,
+
+# --- probe 2: mem save with the SAME size that worked (2000) at 0xC0 addresses ---
+mem save \T1_imgstart.bin C0000000,,2000
+mem save \T2_low.bin C0039A00,,2000
+mem save \T3_mid.bin C0500000,,2000
+
+# --- probe 4: same addresses, bigger size (like H's 10000) ---
+mem save \T4_big.bin C0500000,,10000
+
+# --- probe 5: control group (known-good 0x2E area, small size 800 like failed A-G) ---
+mem save \T5_ctl_800.bin 2E000000,,800
+
+# --- probe 6: wait 15s for image to finish loading, then retry 0xC0 dump ---
+ctrl sleep 15000
+mem save \T6_aftersleep.bin C0500000,,2000
+
+dir

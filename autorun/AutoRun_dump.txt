@@ -1,0 +1,30 @@
+# SIGMA fp palette-region boot dump (firmware 5.02 ONLY)
+# Put this file as \AutoRun.txt on the SD card root, boot the camera,
+# then the DUMP_*.BIN files appear on the card. Remove file = back to stock.
+# NEVER run "prom write" — it can destroy calibration data.
+
+version
+# --- sanity: read a few bytes to confirm mem addressing ---
+mem get C0BAC14C
+
+# --- palette parameter tables (5 copies found in firmware image) ---
+mem save \DUMP_A_names.bin C06C2C80,,800
+mem save \DUMP_B_second.bin C06E3400,,800
+mem save \DUMP_C_first.bin C02A1B00,,800
+mem save \DUMP_D_main.bin C363FC80,,800
+mem save \DUMP_E_repeat.bin C02A2275,,800
+
+# --- UI string table (mode names shown on screen) ---
+mem save \DUMP_F_uistr.bin C35D3C80,,800
+
+# --- factory shell command table (77 entries x 24 bytes) ---
+mem save \DUMP_G_cmds.bin C0BAC14C,,738
+
+# --- runtime pointer/state area referenced by boot register table ---
+mem get 2E00D6D0
+mem save \DUMP_H_state.bin 2E000000,,10000
+
+# --- palette engine runtime objects (PaletteColor state) ---
+mem save \DUMP_I_palette.bin 2E00D000,,2000
+
+dir

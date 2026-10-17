@@ -1,0 +1,31 @@
+# Phase-2 mode-switch differential (paste into fpsh session)
+# 全程 USB shell 完成，不碰相机菜单。size 十进制。
+# 假设当前模式任意；脚本会读出、切换、dump、还原。
+
+# 0. 记录当前模式（输出拍照留底）
+setting get pic_color_mode 0
+
+# 1. 基线 dump（ARM 侧窗口 + DSP 侧对象区）
+mem save \SW_0_before.bin C0900000,,4000000
+mem save \SW_0_dsp.bin 2E014000,,4000
+mem save \SW_0_state.bin 2E00D000,,2000
+
+# 2. 切到模式 3（随便一个非当前值；若 get 显示已是 3 就换 4）
+setting set pic_color_mode 0 3
+
+# 3. 切换后 dump
+mem save \SW_3_after.bin C0900000,,4000000
+mem save \SW_3_dsp.bin 2E014000,,4000
+mem save \SW_3_state.bin 2E00D000,,2000
+
+# 4. 再切一个（双重验证，模式 4）
+setting set pic_color_mode 0 4
+mem save \SW_4_after.bin C0900000,,4000000
+mem save \SW_4_dsp.bin 2E014000,,4000
+
+# 5. 还原模式（把 0 步记下的值填回去，比如 0）
+setting set pic_color_mode 0 0
+setting get pic_color_mode 0
+
+dir
+# 把 SW_*.bin 全部拷到 D:\work\fp\dump\，告诉我每步的 get 输出

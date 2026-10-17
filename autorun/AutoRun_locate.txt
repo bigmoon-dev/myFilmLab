@@ -1,0 +1,16 @@
+# Palette table LOCATOR dump (fw 5.02 only) — revised after first camera run
+# Lessons: size argument is DECIMAL (10000 = ten thousand bytes, not 0x10000)
+#          0x2E00xxxx = boot-stub/driver area, palette tables live in 0xC0xxxxxx image RAM
+
+version
+# sanity anchor: image start must be ARM vector table (LDR pc ..)
+mem get C0000000,C0000040,
+
+# main locator: 5 MB window covering estimated palette region + offset drift
+mem save \LOC_1.bin C0500000,,5000000
+
+# secondary windows (in case tables sit elsewhere in the 49MB image)
+mem save \LOC_2.bin C0200000,,3000000
+mem save \LOC_3.bin C0900000,,4000000
+
+dir

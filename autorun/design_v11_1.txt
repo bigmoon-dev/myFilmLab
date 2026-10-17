@@ -1,0 +1,63 @@
+================================================================================
+v11.1 设计定案 —— 常驻名条（运行时钩子捕获 + DrawingObserver）
+日期：2026-10-17 深夜  状态：全部依赖已实证，零未知项
+================================================================================
+
+■ 机制总览
+在重绘函数入口装一条单字跳转（运行时钩子），第一次重绘把 r0（DRAW manager）
+捕获进全局；监视任务随后：分配堆块缓存条带 → 读卡上 \FILMLAB\N.BIN 进缓存 →
+调官方注册函数把我们的观察者挂进重绘管线。此后系统每次重绘在重绘线程上下文
+调用我们的 draw 回调，直接 memcpy 进 ctx 的显示缓冲——同步、无锁风险、
+无 SD 读、模式切换存活。退出走软关闭（draw 提前返回），观察者永不自动摘除。
+
+■ 依赖台账（全部已实证，含出处）
+
+| 依赖 | 值/约定 | 出处 |
+|---|---|---|
+| 重绘函数 | 0xC0528700，ARM，原字=0xE92D4CF0(push r4-r11,lr) | DRAW.bin 逐字节 |
+| 注册函数 | FUN_c0528300(mgr, mon_idx, obs)：3槽表/每显示器≤3/注册即回调 attach/全程持 mgr+0x78 锁 | DRAW.bin 反编译 |
+| 观察者 vtable | +0x0C draw(obs,ctx,flags)→dirty；+0x10 attach(obs)；+0x1C keepalive(obs)→0=永驻 | 同上 |
+| ctx 结构 | +4=目标像素缓冲；+8→+4=行距；draw 仅在 ctx+4 非空时被调 | 同上 |
+| manager 捕获 | 钩子存 r0 → 全局 mgr_captured；B 指令范围 +0x207100 ✓ | 设计 |
+| cache 发布 | F_DCACHE 0xC000E91C、F_ICACHE 0xC000EABC，无参全量，blx 直调 | stage2.S:419-429 三调用点互证 |
+| 堆分配 | MEM_HEAP 0xC001CF78 (class=0→channel)；MEM_GET 0xC001D038 (ch,size,0,0,[sp]0)→块 | stage2.S:36-37,490-507 |
+| 文件读取 | ctor(st,1)=0xC0365E90；open(st,path)=0xC03665F8；read(st,buf,len,0)=0xC0366060；dtor(st,2)=0xC0365ED0 | osdfile 处理器反编译（DISP.bin） |
+| 条带素材 | 卡上 \FILMLAB\{0..9}.BIN，ARGB1555 1024×56（2048B/行） | K5 实测+逆向 |
+| v9 核心/装载/打包/门 | 现成 | v4-v9 血统 |
+
+■ 钩子细节（安全论证）
+- 单字对齐原子写（旧指令在被发布前始终有效）；写后 F_DCACHE→F_ICACHE 全量；
+  在飞的重绘走旧路径（仅未捕获，无害）
+- hook_redraw_entry（boot.S，ARM）：
+    str r0 → mgr_captured
+    push {r4-r11, lr}      @ = 被顶掉的原字 0xE92D4CF0 原样执行
+    b 0xC0528704
+- 安装前置校验：*(u32*)0xC0528700 == 0xE92D4CF0，不符则功能整体停用（v9 照常）
+- 钩子常驻（RAM-only，断电即无）；每次重绘 6 条指令开销可忽略
+
+■ 观察者对象与 vtable（.bss/.rodata）
+  vtable[8]：{0,0,0, draw, attach, 0, 0, keepalive}（未用槽指向返回 0 的桩）
+  obs = { vptr, ... } 至少 4B
+  draw: if (!active || !cache_valid) return 0;
+        dst=*(u32*)(ctx+4); stride=*(*(u32*)(ctx+8)+4);
+        for 56 行 memcpy(dst+i*stride, cache+i*2048, 2048); return 1;
+  keepalive: return 0（永驻）；attach: 空操作
+  注册：对 4 个显示器各调一次 FUN_c0528300（槽全空实测 cnts=0）
+
+■ 监视任务流（v11.1）
+  boot 稳定 → 装钩子 → 等 mgr_captured（≤3s 超时则放弃观察者，v9 照常）
+  → MEM_HEAP(0)→ch; MEM_GET(ch, 0x1E000,...)→cache（失败则放弃，v9 照常）
+  → v9 主循环原样；每次 apply_look 后重读当前条带进 cache（仅换片时 SD 读）
+  → exit_look：cache_valid=0（draw 熄灭=软关闭）
+
+■ 模拟门（③）
+  桩：0xC0528700 处放假重绘入口（载入 r0=假 mgr 调 hook）；FUN_c0528300 桩
+  记录注册并回调 attach；合成重绘 tick 调 draw(ctx=假缓冲+行距)
+  断言：捕获/注册恰一次×4/条带逐行落 ctx/keepalive=0/退出熄灭/不碰 0xC0528700
+  以外的固件代码字/五件负控灵敏
+
+■ 残余风险（预写死）
+- 钩子后首次重绘与 cache 发布的窗口：单字原子+全量发布已论证安全
+- ctx 解读若与实机有出入 → 条带错位/不见：验收时观察，退路=v11-lite 备胎
+- MEM_GET 拒绝 123KB → 功能停用不崩溃（分配失败路径显式处理）
+================================================================================

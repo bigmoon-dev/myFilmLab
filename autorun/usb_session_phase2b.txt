@@ -1,0 +1,27 @@
+# Phase-2b: 判别 setting set 是否真正生效 + 覆盖未dump区域
+# 每步输出都拍照/复制留底！
+
+# --- A. setting 通路验证 ---
+setting get pic_color_mode 0
+setting set pic_color_mode 0 3
+setting get pic_color_mode 0        # 关键：这里是 3 吗？还是原值？
+
+# --- B. 若 A 生效：dump 之前没覆盖的窗口 ---
+# B1: 0xC0000000-0xC0200000 (镜像头 2MB，从未 dump 过)
+mem save \P2_H0.bin C0000000,,2000000
+# B2: 0xC0500000 窗口基线(已有 LOC_1 可当基线，但为了排除时间因素重拍)
+setting set pic_color_mode 0 0      # 先回 0
+mem save \P2_W0.bin C0500000,,4000000
+setting set pic_color_mode 0 3
+mem save \P2_W3.bin C0500000,,4000000
+
+# --- C. DSP 更大范围 (0x2E018000-0x2E020000 + 0x2E020000+) ---
+mem save \P2_D0.bin 2E018000,,8000
+setting set pic_color_mode 0 4
+mem save \P2_D4.bin 2E018000,,8000
+
+# --- D. 还原 ---
+setting set pic_color_mode 0 0
+setting get pic_color_mode 0
+dir
+# P2_*.bin 拷到 dump 目录；A 段两条 get 的输出务必告诉我

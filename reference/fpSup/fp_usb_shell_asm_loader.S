@@ -1,0 +1,385 @@
+.syntax unified
+.arm
+.text
+/* ============================================================================
+ * loader — read the code off the card instead of spelling it out.
+ * ============================================================================
+ *
+ * The AutoRun is five hundred commands and four hundred of them are `mem set`,
+ * one word each, writing fifteen hundred bytes of worker. The progress bar
+ * exists only because that is slow: without it the readout sits at ninety per
+ * cent through several hundred silent commands and looks exactly like a stall.
+ * Adding the gyro logger to the same file would cost eight hundred more.
+ *
+ * There is no `mem load` -- the shell can save memory to a file but not the
+ * other way -- so the AutoRun cannot ask for this. It can spell out something
+ * small that does the asking, and that is this: about ninety commands, and the
+ * count no longer grows with what is being loaded.
+ *
+ * Runs in place of the worker's own bootstrap, called once from the borrowed
+ * `echo` handler, and after loading it does not start the worker in a new task -- it becomes
+ * the worker, by branching to the entry the file names. One task, and nothing
+ * left parked with nowhere to return to.
+ *
+ *     \fpSup.BIN
+ *      +0x00  "VBIN"
+ *      +0x04  section count
+ *      +0x08  entry, an absolute address to branch to when everything is placed
+ *      +0x0C  total bytes of section data that follow the table
+ *      +0x10  the table: { destination, length } per section
+ *             then the data, in the same order, each section 4-byte aligned
+ *
+ * The magic is checked before anything is copied and before the branch. A file
+ * that is missing or truncated leaves the camera exactly as it was, minus the
+ * shell -- which is the failure that matters, because there is no shell left to
+ * repair it with. That is the price of two files instead of one.
+ * ========================================================================== */
+
+.equ HOOK_SITE,   0xC00D0794
+
+/* The allocator, the way gyro's writer and heapalloc.S use it -- the
+ * descriptor form, whose four arguments all fit in registers.  Class 0 is
+ * USER, which is where `memmgr bufmem get` was taking this same megabyte from;
+ * NOT class 10, which is RAW, the CinemaDNG frame buffer, and the allocation
+ * whose failure is what froze movRec for a week. */
+.equ H_GET,       0xC001D740    /* (desc, class, size, 0)                   */
+.equ H_ADDR,      0xC001D7F0    /* (desc) -> address                        */
+.equ H_FREE,      0xC001D7A0    /* (desc, 2)                                */
+.equ POOL_CLASS,  0            /* USER                                      */
+/* 64 KiB, and it is STAGING, not a pool.
+ *
+ * This was a megabyte, held for the life of the camera, and every card got one
+ * whether it wanted it or not: og3k and og2k never read a byte of it.  What the
+ * loader actually needs is somewhere to put a file that is padded to 32 KiB and
+ * the file object that reads it -- so it asks for that, and gives it back on the
+ * way out.  A payload that needs memory asks the allocator itself, in its entry,
+ * and stage2 places the sections that are offsets into it afterwards. */
+.equ O_FOBJ,      0x0000        /* the file object, about 3 KiB             */
+.equ O_BUF,       0x1000        /* the file: 32 KiB of it, BIN_PAD          */
+#ifdef READ_CAP
+/* build_autorun --read-cap: a card whose sections do not fit 0xF000.  Both
+ * values stay one-instruction immediates, so the loader's length -- and what
+ * the settings block holds -- does not change.  fpSup-Merge does the same in
+ * the page (2026-10-02): it rewrites these two words, and a fast card's
+ * magic, to the smallest 4 KiB multiple the selection needs. */
+.equ POOL_BYTES,  (READ_CAP + 0x1000)
+.equ MAXLEN,      READ_CAP
+#else
+.equ POOL_BYTES,  0x10000
+.equ MAXLEN,      0xF000        /* what is left of the buffer past O_BUF --
+                                 * ask for more than the file can be, but
+                                 * never for more than there is room for   */
+#endif
+
+.equ F_MGR,       0xC0444658
+.equ F_VOL,       0xC0444698
+.equ F_CTOR,      0xC0365E90
+.equ F_OPEN,      0xC0365FB0
+.equ F_READ,      0xC0366060
+.equ F_CLOSE,     0xC0366020
+.equ F_DTOR,      0xC0365ED0
+.equ F_CACHE,     0xC000E91C
+.equ F_ICACHE,    0xC000EABC
+.equ F_TICK_US,   0xC002B6E0    /* () -> microseconds since power-on      */
+
+.equ VOL_SD,      1             /* FUN_c0444698: 1 = the card, 5 = an SSD */
+
+.equ MAGIC,       0x4E494256    /* "VBIN" */
+/* Pops the AutoRun's registration entry and decrements the depth at
+ * 0xC2F20FC0+0x21C.  The interpreter's own teardown calls it -- but ONLY when
+ * [ctx+0x90] is non-zero, and zeroing that byte is how the script is stopped.
+ * So stopping the script the obvious way also skips the pop, the entry stays
+ * registered, the depth never returns to zero, and the camera goes on thinking
+ * a script is running.  The USB shell never comes up after that: the worker is
+ * alive and its replies go nowhere.  Cost of the fix: one word. */
+.equ AR_POP,      0xC0420D90
+
+
+.macro LDA reg, value
+    movw    \reg, #:lower16:\value
+    movt    \reg, #:upper16:\value
+.endm
+
+/* A call to a firmware routine, in one word instead of three.
+ *
+ * `bl` reaches anything within 32 MB and every entry point here is about seven
+ * away, but the assembler lays this file out at zero and has no idea where it
+ * will be copied, so the offset is worked out here from LOADER_BASE (passed in
+ * by build_autorun) and the distance from the file's first byte.  A label
+ * minus a label is a constant the assembler can fold; the dot on its own is
+ * not, which is why the position comes from `9b - _lstart` rather than from
+ * `.`.  Sixteen words saved is a second off every boot, because each word the
+ * AutoRun has to spell out costs a `mem set` and about sixty milliseconds.
+ *
+ * ARM targets only: the displaced callback is Thumb and still needs BLX. */
+.macro CALL target
+9:  .word 0xEB000000 + ((((\target) - (LOADER_BASE + (9b - _lstart)) - 8) >> 2) & 0xFFFFFF)
+.endm
+
+/* The same, as a plain branch: for leaving through a firmware routine. */
+.macro JUMP target
+9:  .word 0xEA000000 + ((((\target) - (LOADER_BASE + (9b - _lstart)) - 8) >> 2) & 0xFFFFFF)
+.endm
+
+.equ AR_START,    0xC03DA758    /* ("\AutoRun.txt", 1): starts the script     */
+
+/* --- the borrowed echo handler: called once, by the AutoRun ----------------
+ *
+ * This used to sit in the gyro callback at 0xC00D0794, and everything odd about
+ * the block below was that address's doing: the site holds a BLX, so the first
+ * thing here had to be a call to the routine it displaced and a place to keep
+ * that routine's return value; the callback fires at 50-90 Hz, so a word had to
+ * be spent proving this had not already run; and because the file read takes
+ * longer than the gap between two callbacks, the firmware's word had to go back
+ * before the read rather than after it.  Three mechanisms, all of them paying
+ * for the choice of site rather than doing any work.
+ *
+ * The AutoRun cannot call -- but it can point the `echo` handler at an address,
+ * say `echo`, and put the handler back, which is what --boot-call has done for
+ * one-shot routines all along.  That gives this: called once because the
+ * AutoRun says so, in the shell dispatcher's own task where a file read is an
+ * ordinary thing to do, at a point in the boot the AutoRun chooses rather than
+ * whenever the IMU next ticks.
+ *
+ * The gyro callback is the logger's now, and only the logger's.
+ *
+ * Handler signature is (ctx, argc, argv) and [ctx] is a printf; nothing here
+ * uses it, and the return value is ignored, so this returns zero. */
+.global boot
+_lstart:
+boot:
+    /* There was a task here.  The shell build used to create one and run `load`
+     * inside it, so that `load_stop` could sit still instead of returning --
+     * and the reason turned out to be nothing: worker.S's own bootstrap calls
+     * tk_cre_tsk itself, from the gyro callback, and always did.  The loader
+     * was creating a task for a payload that creates its own.
+     *
+     * Twenty-four words, and they were the last thing that made a shell card's
+     * AutoRun different from a release card's. */
+    b       load
+
+/* +4: the loader hook's entry.  FIXED OFFSET: stage2 points 0xC03DA420 at
+ * LOADER_BASE+4 and first checks that this word is this branch, so a loader
+ * from another build -- whose hook may sit elsewhere -- is never armed. */
+    b       lhook
+
+load:
+    /* r9 carries the descriptor's address all the way to the free at the end.
+     * Two registers more in the push costs nothing -- it is one instruction
+     * either way -- and it saves the movw/movt pair that reloading the address
+     * down there would take.  The loader is 468 bytes and the store holds 468,
+     * so a spare word is not a nicety here. */
+    push    {r4, r5, r6, r7, r8, r9, r10, lr}
+    mov     r8, #0                      @ the answer: 1 once stage2 has run
+
+#ifdef LOAD_START_US
+    /* --profile: the camera's own microseconds, the moment the loader gets
+     * control.  Together with the word stage2 writes at the end, the two say
+     * how the boot divides:
+     *
+     *     LOAD_START_US          camera boot + the AutoRun up to `echo`
+     *     LOAD_DONE_US - START   read the file, place the sections, run the entry
+     *
+     * The host cannot see either boundary: it can only poll for the worker to
+     * answer, which carries USB enumeration and the polling interval with it
+     * (measured 580 ms of it).
+     *
+     * Six words.  On a card whose loader comes out of the settings block they
+     * cost nothing -- the store is read, not spelled out -- and on one that
+     * spells the loader out they are six more `mem set`, about 430 ms.  That is
+     * why it is a flag rather than the default.
+     *
+     * AFTER the push, and that is not a style choice: `bl` writes lr, and
+     * before the push lr still holds the echo handler's return address.  The
+     * first version of this sat above the push, destroyed it, and the loader
+     * returned into garbage -- the camera froze on every boot and the card had
+     * to come out of the slot to be replaced.  Anything here that calls has to
+     * come after lr is saved.
+     *
+     * r0-r3 and ip are free: nothing has been set up yet.  SP is aligned the
+     * same way recprobe.S does it, because a leaf that is wrong about this is
+     * the freeze our notes warn of.
+     *
+     * r10, not r1, carries sp across the call.  r0-r3 and ip are
+     * caller-saved: the callee may destroy them, so restoring sp from r1 after
+     * the call restores garbage -- measured 2026-09-22, the camera froze on
+     * every boot and the card came out of the slot for the second time that
+     * afternoon.  recprobe.S uses r5 for the same reason.  r10 is in the push
+     * above and dead until the file is open. */
+    mov     r10, sp
+    bic     sp, sp, #7
+    CALL    F_TICK_US
+    mov     sp, r10
+    LDA     r1, LOAD_START_US
+    str     r0, [r1]
+#endif
+
+
+    /* Ask for the staging buffer here instead of having the AutoRun ask.
+     *
+     * `memmgr bufmem get` was one line of script, but it was the script's line:
+     * the AutoRun had to run it, in the right order, before anything that
+     * needed it.  The loader needs it, so the loader asks -- and the answer
+     * still goes to 0xC3757A7C, because the worker, stage2 and every gyro
+     * source read it from there.
+     *
+     * The descriptor is sixteen bytes of cave scratch that has to outlive the
+     * call: the address is read out of it afterwards.  It sits above the worker
+     * and below STORE_FROM; build_autorun refuses a worker that reaches it. */
+    movw    r9, #:lower16:POOL_DESC
+    movt    r9, #:upper16:POOL_DESC
+    mov     r0, r9
+    mov     r1, #POOL_CLASS
+    mov     r2, #POOL_BYTES
+    mov     r3, #0
+    CALL    H_GET
+    mov     r0, r9
+    CALL    H_ADDR
+    cmp     r0, #0
+    beq     load_fail                   @ refused: place nothing rather than
+    mov     r4, r0                      @ stage a file at address zero
+    /* 0xC3757A7C is NOT written here any more.  It is where everything reads a
+     * pool address from, and what it holds now is whatever the payload's entry
+     * published -- the worker's, the logger's -- not a buffer that is about to
+     * be handed back. */
+    add     r5, r4, #O_FOBJ             @ file object scratch
+    add     r6, r4, #O_BUF
+
+    /* Keep the firmware's normal media-manager initialisation in the boot path:
+     * skipping these calls was the only loader-side change in the first native
+     * test that froze at 90%.
+     *
+     * But F_VOL names the volume the camera is CURRENTLY pointed at, and with
+     * an external SSD plugged in that is the SSD -- which does not have
+     * \fpSup.BIN on it.  The card boots, the AutoRun runs, the loader opens
+     * nothing, and the camera ends up with no logger at all: every take that
+     * session is missing its sidecars, with no sign that anything is wrong.
+     * With a shell in the build it is worse -- load_stop spins and the progress
+     * bar stops at 90.
+     *
+     * That is the whole of the "intermittent" SSD fault: an SSD attached BEFORE
+     * boot, every time; attached after the banner, never.  Reproduced on cold
+     * boots repeatedly.
+     *
+     * So: whatever F_VOL says first, then the card.  The card is where AutoRun
+     * was read from, so it is where fpSup.BIN is. */
+    CALL    F_MGR
+    mov     r1, #0
+    CALL    F_VOL
+    mov     r7, r0
+
+1:  mov     r1, r7
+    mov     r0, r5
+    CALL    F_CTOR
+
+    mov     r0, r5
+    adr     r1, path
+    mov     r2, #1
+    CALL    F_OPEN
+    cmp     r0, #0
+    bne     2f
+
+    /* Give the object back before trying again: a file object left constructed
+     * after a failed open makes every later open fail too. */
+    mov     r0, r5
+    mov     r1, #2
+    CALL    F_DTOR
+    cmp     r7, #VOL_SD
+    beq     load_stop                   @ that was the card: there is no file
+    mov     r7, #VOL_SD
+    b       1b
+
+2:  mov     r0, r5
+    mov     r1, r6
+    mov     r2, #MAXLEN                 @ 0x20000 = 2 ror 8, one word not two
+    mov     r3, #0
+    CALL    F_READ
+
+    mov     r0, r5
+    CALL    F_CLOSE
+
+load_shut:
+    mov     r0, r5
+    mov     r1, #2
+    CALL    F_DTOR
+
+    ldr     r0, [r6]                    @ nothing runs until the file says it is
+    LDA     r1, MAGIC                   @ the right file
+    cmp     r0, r1
+    bne     load_stop
+
+    /* The rest of the loading travels in the file, as its first section, and is
+     * therefore free: every word spelled out here costs the AutoRun one
+     * `mem set` and about sixty milliseconds of boot.  Clean the D-cache and
+     * invalidate the I-cache first -- the buffer holds instructions now --
+     * then hand it the buffer.  It places
+     * every section, cleans the cache again, and comes back, unless the file
+     * names an entry, which is how the debug build's worker takes the task. */
+
+    CALL    F_CACHE
+    CALL    F_ICACHE
+    ldr     r1, [r6, #4]                @ section count
+    add     r1, r6, r1, lsl #3
+    add     r1, r1, #16                 @ past the table: the first section's data
+    mov     r0, r6
+    blx     r1
+    mov     r8, #1                      @ stage2 ran: the file is loaded
+
+
+/* Nothing was placed: leave the camera exactly as it was, minus the shell.
+ * The debug build reaches this from its own task, and returning from a task
+ * entry is undefined here -- tk_ext_tsk is not in the syscall table -- so it
+ * sits still instead. */
+load_stop:
+    /* Hand the staging buffer back.  stage2 ran from inside it and has
+     * returned, the payload's entry has been called and has returned, and the
+     * sections that were offsets into the payload's own pool are placed -- so
+     * nothing of ours is left in here.
+     *
+     * Reached only from below the allocation; `load_fail` is the path for a
+     * refusal, because freeing a descriptor that never held anything is not a
+     * no-op. */
+    mov     r0, r9
+    mov     r1, #2
+    CALL    H_FREE
+load_fail:
+    mov     r0, r8                      @ 1 loaded, 0 not
+    pop     {r4, r5, r6, r7, r8, r9, r10, pc}
+
+/* --- the loader hook ---------------------------------------------------------
+ *
+ * The power switch is a warm restart: the image and the cave survive it, and
+ * with them this loader and the word stage2 wrote at 0xC03DA420 -- the one call
+ * that starts the AutoRun.  So on the next boot the firmware comes here instead,
+ * about 1.4 s after power-on (measured 2026-09-25), with the AutoRun's two
+ * arguments in r0/r1.
+ *
+ * Load.  If that worked, return: the AutoRun never starts.  If it did not -- no
+ * file, not a VBIN, a card from somewhere else -- start the AutoRun exactly as
+ * the firmware would have, and that card's own script takes over.
+ *
+ * The caller has pushed three words, so sp may be 4 off; aligned here and put
+ * back from r4, which the push saves and the callee may not destroy. */
+lhook:
+    push    {r0, r1, r4, lr}
+    mov     r4, sp
+    bic     sp, sp, #7
+    bl      load
+    mov     sp, r4
+    cmp     r0, #0
+    pop     {r0, r1, r4, lr}
+    movne   r0, #0
+    bxne    lr
+    JUMP    AR_START                    @ lr is still the firmware's
+
+
+
+path:
+    /* Passed in, not written here.  This line decides the name of the file a
+     * card must carry, and every build line now writes fpSup.BIN -- but it is
+     * still a build-time value rather than a constant, because the name was
+     * VSHL.BIN until 2026-09-19 and every release published before then carries
+     * that name as frozen bytes.  Rebuilding one of those needs its own name,
+     * and one loader that takes the name is better than two loaders. */
+    .asciz  BIN_PATH
+    .align  2

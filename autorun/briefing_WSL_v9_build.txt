@@ -1,0 +1,101 @@
+================================================================================
+任务简报：FILMLAB v9 固件复现构建 + 离线验证门（WSL 侧执行）
+日期：2026-10-14  交接人：主机侧分析 agent  执行人：WSL 构建 agent
+状态：本轮已由主机侧经 `wsl -e` 直接执行完毕（v9 已产出并过模拟门）；
+      本简报留作后续配方/代码改动后的标准重建流程。
+================================================================================
+
+■ 背景（一句话）
+SIGMA fp 胶片模拟包：自制 VBIN 装载文件 v1-v3 的开机冻结根因已定位并修复
+（VBIN entry 字段坐标系错误——应为从文件头算起的偏移/绝对地址，v3 误写成
+body 相对偏移，跳进了 stage2 本体中段）；后又经 v5 实机冻结（取证基址
+错误写进活代码）迭代。当前修复版 = v6，已通过 unicorn 装载链+运行期双段模拟。你的任务：在 WSL 中干净复现整个构建链，确认产物与已验证
+版本一致，并再跑一遍模拟门。不做任何相机侧操作。
+
+■ 环境（已就绪，见 autorun/WSL_SETUP.md）
+- WSL2，clang + lld，target armv7a-none-eabi
+- 项目根：/mnt/d/work/fp
+- python3 可用（构建期用于生成配方表）
+
+■ 红线（不可违反）
+1. 本任务完全不接触相机：不执行任何 prom/adj/fwup 类命令，不写任何卡。
+2. 不修改 firmware/ 与 tools/ 下任何源码。构建失败原样回报，不要自行"修"。
+3. 所有操作限定在 /mnt/d/work/fp 内。
+
+■ 任务步骤
+
+1) 干净重建固件
+   cd /mnt/d/work/fp/firmware
+   make clean
+   make firmware.elf
+   注意：直接 `make`（all 目标）会在 sections.txt 步骤报
+   "armv7a-none-eabi-objdump: not found / llvm-objdump: not found" 错误 127
+   ——这是已知无害项（仅信息性产物），所以本任务只构建 firmware.elf 目标。
+   预期：boot.o、monitor.o、gen_looks.o 编译无 warning 之外的新错误，
+   gen_looks.c 由 python3 ../tools/gen_looks.py 重新生成（10 looks）。
+
+2) 打包 VBIN（tools/package.py，entry=绝对地址范式）
+   cd /mnt/d/work/fp/tools
+   python3 package.py
+   预期输出包含：
+     +.ARM.exidx: 16B @ 0xC072EC84
+     +.rodata: 600B @ 0xC072EC94
+     +.bss (zeroed): 26B @ 0xC072EEEC
+     VBIN: 5 sections, body 3040B, total 3096B, entry=0xC072E800
+   （地址若因代码变化而漂移属正常，但 entry 必须等于 .text 基址 0xC072E800，
+    段数必须 5，段0 必须 1240B）
+
+3) 头部与完整性校验（逐字节门）
+   在 tools/ 下执行：
+   python3 - <<'EOF'
+   import struct, hashlib
+   d = open('../dist/fpSup.BIN','rb').read()
+   s2 = open('stage2.bin','rb').read()
+   magic, count, entry, body = struct.unpack_from('<4sIII', d, 0)
+   off = 16 + count*8
+   print('size', len(d), 'sha1', hashlib.sha1(d).hexdigest())
+   print('magic', magic, 'count', count, 'entry 0x%08X' % entry, 'body', body)
+   for i in range(count):
+       a, l = struct.unpack_from('<II', d, 16+i*8)
+       print('  [%d] dest=0x%08X len=%d' % (i, a, l))
+       assert l % 4 == 0, '段长必须 4 对齐'
+   assert magic == b'VBIN'
+   assert count == 5
+   assert entry == 0xC072E800, 'entry 必须是绝对地址 .text 基址'
+   assert d[off:off+1240] == s2, '段0 必须与 stage2.bin 逐字节一致'
+   assert len(d) <= 0xF000, '不得超过 loader MAXLEN'
+   print('HEADER GATE: PASS')
+   EOF
+   参考指纹（主机侧已验证版本）：v9 = size 3992，sha1 = a6abb5e04f996f3d31099bd6711a77371790c6ed（Part B 求解配方）。
+   （v8 = 36276fa2…，menu 序号域误判已修——MONO=11 非 13，勿用；
+   （v7 = 2784B / 4b241850…，预览层全通但捕获为原厂；
+     v6 = 2772B / a66d4020…，EXIF 全通但快门重推缺口；
+     v5 = 2772B / 0717e413…，实机冻结勿用；v4 = 3096B，EXIF 空名）
+   若 sha1 不同但上述断言全过：检查 firmware.elf 是否被改动过——逐段
+   dest/len 一致即可接受；若连断言都不过，停止并回报差异，不要继续。
+
+4) unicorn 全路模拟门（若 WSL python3 无 unicorn：pip3 install unicorn；
+   装不上就跳过本步并在回报中注明，主机侧可补跑）
+   cd /mnt/d/work/fp/tools
+   python3 simulate_load.py
+   预期：装载链 20/20 + 运行期 18/18 全 PASS，末尾 "总体: PASS"，退出码 0。
+   负控3：python3 simulate_load.py ../reference/fpSup_v6_shuttergap.BIN
+   预期 "总体: FAIL" 退出码 1（审计须识别 v6 的同值重推缺口）。
+   负控2（必跑）：python3 simulate_load.py ../reference/fpSup_v5_frozen.BIN
+   预期 "总体: FAIL" 退出码 1（审计须能拦截 v5 的破坏性写入）。
+   负控抽查（审计器灵敏度，可选但建议）：
+   python3 simulate_load.py --neg-control
+   预期：打印 "总体: FAIL"，退出码 0（负控下 FAIL=审计有效）。
+
+■ 回报格式
+- make 输出末 10 行
+- package.py 完整输出
+- 第 3 步校验脚本完整输出（含 sha1）
+- simulate_load.py 的 PASS/FAIL 清单（末 24 行）与退出码
+- 任何与预期不符之处：原样贴出，不做解释性加工
+
+■ 后续（不属于本任务）
+通过全部校验后，由人在相机侧做终验：卡上 \fpSup.BIN 替换为 dist/fpSup.BIN
+（AutoRun.txt 不动），拔电池冷启动，预期进度条走完显示 fpSup!。
+异常兜底：拔电池+拔卡即完全还原（v4/v5/v6 均无任何 flash 写，已逐字节审计）。
+================================================================================

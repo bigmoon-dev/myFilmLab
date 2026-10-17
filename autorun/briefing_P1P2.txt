@@ -1,0 +1,66 @@
+【简报 P1+P2 · 合并版：DUO 家族改名 + 五微调字节定位】
+（里程碑：①自定义名进 UI/EXIF ②配方应用机制定案）
+
+■ 开始前确认
+- fpsh 连通（ping OK）；STD 态；SD 卡 ≥ 10MB；电池充足
+- 写法规范：值带 0x 前缀；命令耐心单发（10-15s 超时）
+- 死机预案：拔电池重启（卡不拔）→ usbipd detach/attach → 断点续跑
+
+■ P1 第一段：定位 DUO 显示名（纯读）
+
+P1-1. 当前语言：
+./host/fpsh gui lang
+（记录返回值——后续只改活动语言库的条目）
+
+P1-2. 读变体码资源簇（5 处 OR1 位置的实值，理解记录格式）：
+./host/fpsh mem get C0D0FB50,C0D0FB90,
+./host/fpsh mem get C0D48570,C0D485B0,
+./host/fpsh mem get C0D4CCC0,C0D4CD00,
+（记录原始字节——判断名字字段边界、长度、邻接结构）
+
+P1-3. 搜活动语言库里的 DUO/变体串（若 gui lang 返回英语，
+      英语库范围约 0xC0DAxxxx-0xC0DE5FBC）：
+./host/fpsh mem get C0DB8F00,C0DB9000,   （英语库抽样，找 DUO/R1 字样）
+（若没有，用 mem get 分段扫 0xC0D56CEC-0xC0F60000 的库头区域定位）
+
+■ P1 第二段：同长度改名实验（先备份！）
+
+目标（等长替换，零溢出）：
+  某变体码 "OR1"（3字符）→ "KDK"
+  DUO 前缀（若找到独立存储的 "DUO" 3字符）→ "FILMLAB" 不行（超长），
+  用 3 字符如 "LAB"
+
+步骤：
+1. 备份目标字节（P1-2 已读，确认写入范围）
+2. 逐字节写入新名（保持 \0 终止符位置不变）
+3. 按 Color 键打开选择器选到 DUO —— 上下键翻变体：
+   屏幕显示变了吗？（记录每一处改动对应的效果——哪份拷贝喂了 UI）
+4. 显示生效 → 拍一张照 → 拷回查 EXIF 色彩模式字段
+5. 全部还原（写回备份字节），Color 键确认恢复
+
+■ P2：五微调存储字节定位（每轴三步）
+
+./host/fpsh menu dump > md_base.txt（本地重定向不行就手工存档输出）
+
+对 Sat/Con/Ton/Shp/Eff 逐轴：
+./host/fpsh menu SetColorModeSaturation 4
+./host/fpsh menu dump        （存 md_sat4）
+./host/fpsh menu SetColorModeSaturation 0
+（共 5 份 dump + 基线 = 6 份，拷回 /mnt/d/work/fp/dump/）
+
+传播测试（拿到 sat 字节后）：
+./host/fpsh mem set <sat字节地址> 0x00000004
+./host/fpsh menu SetColorModeSaturation   （getter 读到 4 吗？）
+→ 拍一张照（饱和度生效吗？）→ Color 键切走自愈 → 复核归零
+
+■ 交付
+1. gui lang 返回值 + P1-2 三段原始字节
+2. P1 改名后：屏幕效果记录（哪份拷贝生效）+ EXIF 字段值 + 还原确认
+3. P2 六份 dump + 传播测试结果
+4. 异常记录
+
+■ 红线
+- 写操作：名字字节（同长度、先备份、全部还原）+ menu 微调（全归零）
+  + 单字节传播试探（自愈收尾）
+- 禁 2E030000+；禁永久写命令（prom/adj/fwup 等）
+- 本简报两个里程碑，不追加任何实验
