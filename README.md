@@ -38,7 +38,41 @@ RAM-only（拔电池=完全原厂），照片+EXIF 同步。
 - **零 flash 写**：全程 RAM-only，拔电池+拔卡 = 完全原厂
 - 离线模拟门：unicorn 全路装载链+运行期验证，含实物负控五件套
 
-## 项目结构
+## 色彩配方标定方法
+
+配方不是手调的——用**数据驱动**的标定管线求解：
+
+### 1. 地面真值（Ground Truth）
+
+30 个 [GlassMeter](https://glass.works) 胶片模拟 LUT（CC BY 4.0）——
+社区用**真实胶片扫描**标定的 3D 色彩查找表，覆盖 Kodak Portra/Ektar/Gold、
+CineStill、Fuji 400H/Velvia、Ilford、Kodak B&W 等。
+
+### 2. 相机响应矩阵（Part B，33 张）
+
+用固件官方 setter 链对测试图（`tools/testchart.png`）拍照：
+- 5 个底座（STD/VIV/NTR/CINE/MONO）的基线
+- STD 底座的五轴单变量增量（对比度/饱和度/色调/锐度各档）
+- 负档线性度验证
+
+每张照片提取 16 个色块的 Lab 均值 → 建立线性响应模型。
+
+### 3. 跨底座贪心求解
+
+```
+tools/calibrate.py --matrix --shots dump/calib --targets luts/targets
+```
+
+对每个胶片 LUT 目标：遍历所有底座 × 轴参数组合，
+最小化色块误差（Lab 空间欧氏距离）→ 产出 `(底座, 五轴)` 最优解。
+
+### 4. 已知局限
+
+- **分辨率极限**：五轴是线性调整，同系列胶片会塌缩同解
+  （如 Portra 160/400 在参数空间里不可区分——已如实披露）
+- **底座覆盖**：Part B 只标定了 5 个底座，fp 共有 15 个可用
+  （补拍 9 个底座的基线即可扩展）
+- **误差仅排序参考**：最终配方以人眼复核为准
 
 ```
 firmware/          boot.S + monitor.c + link.ld + Makefile
