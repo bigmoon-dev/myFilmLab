@@ -64,5 +64,8 @@ REPORT_MILESTONE.md  全程里程碑
 
 ## 许可
 
-本项目代码仅供学习和个人使用。
-Sigma fp 固件版权归 Sigma Corporation 所有。
+本项目采用 [GPL v3](LICENSE) 许可（因内嵌 fpSup GPL v3 组件）。
+
+- [fpSup](https://github.com/ijigen/fpSup) — GPL v3，作者 ijigen/Bei
+- [GlassMeter](https://glass.works) LUTs — CC BY 4.0
+- Sigma fp 固件版权归 Sigma Corporation 所有（本项目不分发固件原像）
