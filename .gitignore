@@ -23,3 +23,8 @@ tools/write_v112.py
 tools/k5_session.sh
 tools/draw_dump.sh
 tools/dump2.sh
+.zcode/
+tools/ghidra_*.py
+tools/_*.py
+tools/chase*.py
+tools/stage2.bin

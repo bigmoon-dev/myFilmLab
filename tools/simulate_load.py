@@ -387,7 +387,14 @@ def main():
     wr_white_ref[0] = wr_white_rt
     rt_fail0 = len(state['fail'])
     SLOT_ALL_v11 = [0xC0970904,0xC09709EC,0xC0CC2FF0,0xC2DFD08C,0xC2E44ABC,
-                    0xC09709B0,0xC0970A98,0xC0CC2FDC,0xC2DFD180]
+                    0xC09709B0,0xC0970A98,0xC0CC2FDC,0xC2DFD180,
+                    0xC09709BC,0xC0970AA4,0xC0CC2FF8,0xC2DFD18C,0xC2E44AC4,
+                    0xC0970970,0xC0970A58,0xC0CC3004,0xC2DFD124,0xC2E44AD0,
+                    0xC0970918,0xC0970A00,0xC0CC2FE8,0xC2DFD0C8,
+                    0xC097097C,0xC0970A64,0xC0CC3010,0xC2DFD130,0xC2E44ADC,
+                    0xC0970988,0xC0970A70,0xC0CC3038,0xC2DFD14C,0xC2E44B04,
+                    0xC0970928,0xC0970A10,0xC0CC3044,0xC2DFD0FC,0xC2E44B10,
+                    0xC09709E0,0xC0970AC8,0xC0CC301C,0xC2E44AE8]
     wr_white_ref[0] = wr_white_rt
     mu.reg_write(UC_ARM_REG_SP, STACK_HI - 16)
     mu.reg_write(UC_ARM_REG_LR, ECHO_RET)
@@ -426,8 +433,7 @@ def main():
     def setters(): return list(state['setters'])
     def slot_str(s, n=10): return bytes(mu.mem_read(s, n)).split(b'\x00')[0]
     NTR_SLOTS = [0xC0970904, 0xC09709EC, 0xC0CC2FF0, 0xC2DFD08C, 0xC2E44ABC]
-    PRT400_SEQ = [('SetColorMode','2'),('Effect','0'),('Contrast','1'),
-                  ('Sharpness','0'),('Saturation','2'),('Toning','2')]
+    PRT400_SEQ = [('SetColorMode','3'),('Effect','0'),('Contrast','0'),('Sharpness','0'),('Saturation','1'),('Toning','1')]
 
     # --- 1) 启动：钩子安装（原字校验→单字替换→cache 发布）---
     mu.mem_write(0xC31F8914, b'\x18')
@@ -449,8 +455,7 @@ def main():
 
     # --- 3) 换片闪显 ---
     STD_SLOTS = [0xC09709B0, 0xC0970A98, 0xC0CC2FDC, 0xC2DFD180]
-    CS800T_SEQ = [('SetColorMode','0'),('Effect','0'),('Contrast','2'),
-                  ('Sharpness','2'),('Saturation','0'),('Toning','4')]
+    CS800T_SEQ = [('SetColorMode','4'),('Effect','0'),('Contrast','0'),('Sharpness','1'),('Saturation','0'),('Toning','0')]
     mu.mem_write(0xC31F8914, b'')
     run_slices(2)
     chk2(setters()[2*len(a1):2*len(a1)+6] == CS800T_SEQ, f'换片应用 = {setters()[2*len(a1):2*len(a1)+6]}')
@@ -465,7 +470,7 @@ def main():
     drawfn = struct.unpack('<I', bytes(mu.mem_read(vt + 0x0C, 4)))[0]
     keepfn = struct.unpack('<I', bytes(mu.mem_read(vt + 0x1C, 4)))[0]
     tail = setters()[-7:]
-    chk2(tail == [('SetColorMode','2'),('Effect','0'),('Contrast','0'),('Sharpness','0'),
+    chk2(tail == [('SetColorMode','3'),('Effect','0'),('Contrast','0'),('Sharpness','0'),
                   ('Saturation','0'),('Toning','0'),('SetColorMode','1')],
          f'exit 归零往返 = {tail}')
 

@@ -219,10 +219,10 @@ TARGET_MAP = {   # tgt_ 文件基名: (配方名, host)
     'fuji-pro-400h':      ('FUJI4H', 'DUO_G2'),
     'cinestill-800t':     ('CS800T', 'DUO_B1'),
 }
-MENU2BASE = {0: 'STD', 1: 'VIV', 2: 'NTR', 5: 'CINE', 11: 'MONO'}  # R_FileSelect 全排列
+MENU2BASE = {0: 'STD', 1: 'VIV', 2: 'NTR', 3: 'PORT', 4: 'LAND', 5: 'CINE', 6: 'TO', 7: 'SUNR', 8: 'FORG', 9: 'FOVB', 10: 'FOVY', 11: 'MONO', 13: 'POWB', 15: 'WGLD'}  # R_FileSelect 全排列
 AX2KEY = {'Effect': 'effect', 'Contrast': 'contrast', 'Sharpness': 'sharpness',
           'Saturation': 'saturation', 'Toning': 'toning'}   # 与 AXIS_RANGES 同域
-NAME_WIN = {'STD': 8, 'VIV': 5, 'NTR': 7, 'CINE': 9, 'MONO': 10}  # 名长上限(池紧缩窗)
+NAME_WIN = {'STD': 8, 'VIV': 5, 'NTR': 7, 'PORT': 8, 'LAND': 9, 'CINE': 9, 'TO': 13, 'SUNR': 9, 'FORG': 11, 'FOVB': 6, 'FOVY': 8, 'MONO': 10, 'POWB': 10, 'WGLD': 8}  # 名长上限(池紧缩窗)
 
 def run_matrix(shots_dir, manifest_path, targets_dir, out_path):
     man = json.load(open(manifest_path))
